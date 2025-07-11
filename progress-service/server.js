@@ -13,7 +13,8 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'bible_bot',
   user: process.env.DB_USER || 'bible_user',
   password: process.env.DB_PASSWORD || 'bible_pass_2025',
-  schema: process.env.DB_SCHEMA || 'bible_bot',
+  // ✅ CORRETO: usar options em vez de schema
+  options: `-c search_path=${process.env.DB_SCHEMA || 'public'}`,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
