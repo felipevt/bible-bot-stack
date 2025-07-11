@@ -11,14 +11,19 @@ const config = {
     port: process.env.DB_PORT || 5432,
     database: process.env.DB_NAME || 'bible_bot',
     user: process.env.DB_USER || 'bible_user',
-    password: process.env.DB_PASSWORD || 'bible_pass_2025'
+    password: process.env.DB_PASSWORD || 'bible_pass_2025',
+    schema: process.env.DB_SCHEMA || 'bible_bot'
   },
   redis: {
-    url: process.env.REDIS_URL || null,  // URL completa da Railway
-    // Fallback para config individual
     host: process.env.REDIS_HOST || 'localhost',
-    port: process.env.REDIS_PORT || 6379,
-    password: process.env.REDIS_PASSWORD || null
+    port: process.env.REDIS_PORT || 6379
+  },
+  evolution: {
+    url: process.env.EVOLUTION_API_URL || 'http://localhost:8080',
+    apiKey: process.env.EVOLUTION_API_KEY || 'evolution_bible_bot_2025'
+  },
+  n8n: {
+    webhookUrl: process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/scheduler'
   }
 };
 
@@ -34,22 +39,13 @@ async function initializeConnections() {
     await dbClient.connect();
     console.log('✅ Conectado ao PostgreSQL');
 
-    // Redis - com suporte para URL completa
-    if (config.redis.url) {
-      // Usar URL completa da Railway
-      redisClient = redis.createClient({
-        url: config.redis.url
-      });
-    } else {
-      // Usar configuração individual
-      redisClient = redis.createClient({
-        socket: {
-          host: config.redis.host,
-          port: config.redis.port
-        },
-        password: config.redis.password
-      });
-    }
+    // Redis
+    redisClient = redis.createClient({
+      socket: {
+        host: config.redis.host,
+        port: config.redis.port
+      }
+    });
     
     redisClient.on('error', (err) => {
       console.error('❌ Erro no Redis:', err);
@@ -57,10 +53,6 @@ async function initializeConnections() {
     
     await redisClient.connect();
     console.log('✅ Conectado ao Redis');
-    
-    // Testar conexão
-    await redisClient.ping();
-    console.log('✅ Redis respondeu ao PING');
 
   } catch (error) {
     console.error('❌ Erro ao conectar:', error);
