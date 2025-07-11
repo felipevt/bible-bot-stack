@@ -11,7 +11,8 @@ const config = {
     port: process.env.DB_PORT || 5432,
     database: process.env.DB_NAME || 'bible_bot',
     user: process.env.DB_USER || 'bible_user',
-    password: process.env.DB_PASSWORD || 'bible_pass_2025'
+    password: process.env.DB_PASSWORD || 'bible_pass_2025',
+    schema: process.env.DB_SCHEMA || 'bible_bot'
   },
   redis: {
     host: process.env.REDIS_HOST || 'localhost',
