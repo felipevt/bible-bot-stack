@@ -15,8 +15,11 @@ const config = {
     options: `-c search_path=${process.env.DB_SCHEMA || 'public'}`
   },
   redis: {
+    url: process.env.REDIS_URL || null,  // URL completa da Railway
+    // Fallback para config individual
     host: process.env.REDIS_HOST || 'localhost',
-    port: process.env.REDIS_PORT || 6379
+    port: process.env.REDIS_PORT || 6379,
+    password: process.env.REDIS_PASSWORD || null
   },
   evolution: {
     url: process.env.EVOLUTION_API_URL || 'http://localhost:8080',
