@@ -1,0 +1,347 @@
+networks:
+  bible-bot-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  n8n_data:
+  evolution_data:
+
+services:
+  # Banco de dados PostgreSQL
+  postgres:
+    image: postgres:15-alpine
+    container_name: bible-bot-postgres
+    environment:
+      POSTGRES_DB: bible_bot
+      POSTGRES_USER: bible_user
+      POSTGRES_PASSWORD: bible_pass_2025
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --locale=pt_BR.UTF-8"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql
+      - ./database/create_evolution_db.sql:/docker-entrypoint-initdb.d/03-create-evolution-db.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - bible-bot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bible_user -d bible_bot"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Cache Redis
+  redis:
+    image: redis:7-alpine
+    container_name: bible-bot-redis
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - bible-bot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # N8N - Orquestrador Principal
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: bible-bot-n8n
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=bible_admin_2025
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678
+      - GENERIC_TIMEZONE=America/Sao_Paulo
+      - TZ=America/Sao_Paulo
+      - DB_TYPE=postgresdb
+      - DB_POSTGRESDB_HOST=postgres
+      - DB_POSTGRESDB_PORT=5432
+      - DB_POSTGRESDB_DATABASE=bible_bot
+      - DB_POSTGRESDB_USER=bible_user
+      - DB_POSTGRESDB_PASSWORD=bible_pass_2025
+      - N8N_ENCRYPTION_KEY=bible_bot_encryption_key_2025
+    ports:
+      - "5678:5678"
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./n8n/workflows:/home/node/.n8n/workflows
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - bible-bot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Evolution API - Interface WhatsApp
+  evolution-api:
+    image: atendai/evolution-api:v2.2.0
+    container_name: bible-bot-evolution
+    environment:
+      - AUTHENTICATION_TYPE=apikey
+      - AUTHENTICATION_API_KEY=evolution_bible_bot_2025
+      - AUTHENTICATION_EXPOSE_IN_FETCH_INSTANCES=true
+      - LANGUAGE=pt-BR
+      - DEL_INSTANCE=false
+
+      # Server Configuration
+      - SERVER_TYPE=http
+      - SERVER_PORT=8080
+      - SERVER_URL=http://localhost:8080
+      
+      # SSL Configuration (descomente se usar HTTPS)
+      # - SSL_CONF_PRIVKEY=/path/to/cert.key
+      # - SSL_CONF_FULLCHAIN=/path/to/cert.crt
+      
+      # Sentry
+      - SENTRY_DSN=
+      
+      # CORS Configuration
+      - CORS_ORIGIN=*
+      - CORS_METHODS=GET,POST,PUT,DELETE
+      - CORS_CREDENTIALS=true
+      
+      # Logging Configuration
+      - LOG_LEVEL=LOG,WEBHOOKS
+      - LOG_COLOR=true
+      - LOG_BAILEYS=error
+      
+      # Event Emitter
+      - EVENT_EMITTER_MAX_LISTENERS=50
+      
+      # Instance Management
+      - DEL_INSTANCE=false
+      
+      # Database Configuration
+      - DATABASE_PROVIDER=postgresql
+      - DATABASE_CONNECTION_URI=postgresql://bible_user:bible_pass_2025@postgres:5432/evolution_api
+      - DATABASE_CONNECTION_CLIENT_NAME=evolution_exchange
+      
+      # Database Save Options
+      - DATABASE_SAVE_DATA_INSTANCE=true
+      - DATABASE_SAVE_DATA_NEW_MESSAGE=true
+      - DATABASE_SAVE_MESSAGE_UPDATE=true
+      - DATABASE_SAVE_DATA_CONTACTS=true
+      - DATABASE_SAVE_DATA_CHATS=true
+      - DATABASE_SAVE_DATA_LABELS=true
+      - DATABASE_SAVE_DATA_HISTORIC=true
+      - DATABASE_SAVE_IS_ON_WHATSAPP=true
+      - DATABASE_SAVE_IS_ON_WHATSAPP_DAYS=7
+      - DATABASE_DELETE_MESSAGE=true
+      
+      # RabbitMQ Configuration
+      - RABBITMQ_ENABLED=false
+      - RABBITMQ_URI=amqp://rabbitmq:5672
+      - RABBITMQ_EXCHANGE_NAME=evolution
+      - RABBITMQ_FRAME_MAX=8192
+      - RABBITMQ_GLOBAL_ENABLED=false
+      - RABBITMQ_PREFIX_KEY=evolution
+      
+      # SQS Configuration
+      - SQS_ENABLED=false
+      - SQS_ACCESS_KEY_ID=
+      - SQS_SECRET_ACCESS_KEY=
+      - SQS_ACCOUNT_ID=
+      - SQS_REGION=
+      
+      # WebSocket Configuration
+      - WEBSOCKET_ENABLED=false
+      - WEBSOCKET_GLOBAL_EVENTS=false
+      
+      # Pusher Configuration
+      - PUSHER_ENABLED=false
+      - PUSHER_GLOBAL_ENABLED=false
+      - PUSHER_GLOBAL_APP_ID=
+      - PUSHER_GLOBAL_KEY=
+      - PUSHER_GLOBAL_SECRET=
+      - PUSHER_GLOBAL_CLUSTER=
+      - PUSHER_GLOBAL_USE_TLS=true
+      
+      # WhatsApp Business API
+      - WA_BUSINESS_TOKEN_WEBHOOK=evolution
+      - WA_BUSINESS_URL=https://graph.facebook.com
+      - WA_BUSINESS_VERSION=v20.0
+      - WA_BUSINESS_LANGUAGE=en_US
+      
+      # Global Webhook Settings
+      - WEBHOOK_GLOBAL_ENABLED=false
+      - WEBHOOK_GLOBAL_URL=http://localhost:5678/webhook-test/whatsapp
+      - WEBHOOK_GLOBAL_WEBHOOK_BY_EVENTS=false
+      - WEBHOOK_EVENTS_APPLICATION_STARTUP=false
+      - WEBHOOK_EVENTS_QRCODE_UPDATED=true
+      - WEBHOOK_EVENTS_MESSAGES_SET=true
+      - WEBHOOK_EVENTS_MESSAGES_UPSERT=true
+      - WEBHOOK_EVENTS_MESSAGES_EDITED=true
+      - WEBHOOK_EVENTS_MESSAGES_UPDATE=true
+      - WEBHOOK_EVENTS_MESSAGES_DELETE=true
+      - WEBHOOK_EVENTS_SEND_MESSAGE=true
+      - WEBHOOK_EVENTS_SEND_MESSAGE_UPDATE=true
+      - WEBHOOK_EVENTS_CONTACTS_SET=true
+      - WEBHOOK_EVENTS_CONTACTS_UPSERT=true
+      - WEBHOOK_EVENTS_CONTACTS_UPDATE=true
+      - WEBHOOK_EVENTS_PRESENCE_UPDATE=true
+      - WEBHOOK_EVENTS_CHATS_SET=true
+      - WEBHOOK_EVENTS_CHATS_UPSERT=true
+      - WEBHOOK_EVENTS_CHATS_UPDATE=true
+      - WEBHOOK_EVENTS_CHATS_DELETE=true
+      - WEBHOOK_EVENTS_GROUPS_UPSERT=true
+      - WEBHOOK_EVENTS_GROUPS_UPDATE=true
+      - WEBHOOK_EVENTS_GROUP_PARTICIPANTS_UPDATE=true
+      - WEBHOOK_EVENTS_CONNECTION_UPDATE=true
+      - WEBHOOK_EVENTS_REMOVE_INSTANCE=false
+      - WEBHOOK_EVENTS_LOGOUT_INSTANCE=false
+      - WEBHOOK_EVENTS_LABELS_EDIT=true
+      - WEBHOOK_EVENTS_LABELS_ASSOCIATION=true
+      - WEBHOOK_EVENTS_CALL=true
+      - WEBHOOK_EVENTS_TYPEBOT_START=false
+      - WEBHOOK_EVENTS_TYPEBOT_CHANGE_STATUS=false
+      - WEBHOOK_EVENTS_ERRORS=false
+      - WEBHOOK_EVENTS_ERRORS_WEBHOOK=
+      
+      # Webhook Retry Configuration
+      - WEBHOOK_REQUEST_TIMEOUT_MS=60000
+      - WEBHOOK_RETRY_MAX_ATTEMPTS=10
+      - WEBHOOK_RETRY_INITIAL_DELAY_SECONDS=5
+      - WEBHOOK_RETRY_USE_EXPONENTIAL_BACKOFF=true
+      - WEBHOOK_RETRY_MAX_DELAY_SECONDS=300
+      - WEBHOOK_RETRY_JITTER_FACTOR=0.2
+      - WEBHOOK_RETRY_NON_RETRYABLE_STATUS_CODES=400,401,403,404,422
+      
+      # Session Configuration
+      - CONFIG_SESSION_PHONE_CLIENT=Evolution API
+      - CONFIG_SESSION_PHONE_NAME=Chrome
+      - CONFIG_SESSION_PHONE_VERSION=2.3000.1023204200
+      
+      # QRCode Configuration
+      - QRCODE_LIMIT=30
+      - QRCODE_COLOR=#175197
+      
+      # Integrations
+      - TYPEBOT_ENABLED=false
+      - TYPEBOT_API_VERSION=latest
+      - CHATWOOT_ENABLED=false
+      - CHATWOOT_MESSAGE_READ=true
+      - CHATWOOT_MESSAGE_DELETE=true
+      - CHATWOOT_BOT_CONTACT=true
+      - OPENAI_ENABLED=false
+      - DIFY_ENABLED=false
+      - N8N_ENABLED=false
+      - EVOAI_ENABLED=false
+      
+      # Cache Configuration
+      - CACHE_REDIS_ENABLED=true
+      - CACHE_REDIS_URI=redis://redis:6379/6
+      - CACHE_REDIS_TTL=604800
+      - CACHE_REDIS_PREFIX_KEY=evolution
+      - CACHE_REDIS_SAVE_INSTANCES=false
+      - CACHE_LOCAL_ENABLED=false
+      
+      # S3 Configuration
+      - S3_ENABLED=false
+      - S3_ACCESS_KEY=
+      - S3_SECRET_KEY=
+      - S3_BUCKET=evolution
+      - S3_PORT=443
+      - S3_ENDPOINT=s3.domain.com
+      - S3_REGION=eu-west-3
+      - S3_USE_SSL=true
+    
+      
+    volumes:
+      - evolution_data:/evolution/instances
+      - evolution_data:/evolution/store
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres
+      - redis
+      - n8n
+    networks:
+      - bible-bot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Serviço de Agendamento
+  scheduler:
+    build:
+      context: ./scheduler
+      dockerfile: Dockerfile
+    container_name: bible-bot-scheduler
+    environment:
+      - NODE_ENV=production
+      - TZ=America/Sao_Paulo
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=bible_bot
+      - DB_USER=bible_user
+      - DB_PASSWORD=bible_pass_2025
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - EVOLUTION_API_URL=http://evolution-api:8080
+      - EVOLUTION_API_KEY=evolution_bible_bot_2025
+      - N8N_WEBHOOK_URL=http://n8n:5678/webhook/scheduler
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - redis
+      - evolution-api
+      - n8n
+    networks:
+      - bible-bot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # Progress Service
+  progress-service:
+    build:
+      context: ./progress-service
+      dockerfile: Dockerfile
+    container_name: bible-bot-progress
+    environment:
+      - NODE_ENV=production
+      - TZ=America/Sao_Paulo
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=bible_bot
+      - DB_USER=bible_user
+      - DB_PASSWORD=bible_pass_2025
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    ports:
+      - "3001:3001"
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - bible-bot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
