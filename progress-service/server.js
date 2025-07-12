@@ -155,7 +155,7 @@ app.put('/user/:phoneNumber/status', async (req, res) => {
 });
 
 // DEL /user/:phoneNumber/del - Deletar usuário
-app.del('/user/:phoneNumber/del', async (req, res) => {
+app.delete('/user/:phoneNumber/delete', async (req, res) => {
   try {
     const { phoneNumber } = req.params;
     
