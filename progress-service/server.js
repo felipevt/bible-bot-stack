@@ -452,7 +452,7 @@ app.get('/progress/:phoneNumber/report', async (req, res) => {
     console.log(`✅ Variáveis: ${process.env.SERVICE_URL} ${process.env.SERVICE_PORT}`);
     const progressData = await fetch(`${process.env.SERVICE_URL}:${process.env.SERVICE_PORT}/progress/${phoneNumber}`, {
   headers: {
-    'x-api-key': process.env.API_KEY
+    'api-key': process.env.API_KEY
   }
 });
     const data = await progressData.json();
