@@ -1,3 +1,4 @@
+
 const express = require('express');
 const { Pool } = require('pg');
 const redis = require('redis');
@@ -13,23 +14,69 @@ const pool = new Pool({
   database: process.env.DB_NAME || 'bible_bot',
   user: process.env.DB_USER || 'bible_user',
   password: process.env.DB_PASSWORD || 'bible_pass_2025',
-  // ✅ CORRETO: usar options em vez de schema
-  options: `-c search_path=${process.env.DB_SCHEMA || 'public'}`,
   max: 20,
   idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 2000,
 });
 
-// Configuração Redis
-const redisClient = redis.createClient({
-  socket: {
+// Configuração Redis - CORRIGIDA
+let redisClient;
+
+async function initializeRedis() {
+  const redisConfig = {
+    url: process.env.REDIS_URL || null,
     host: process.env.REDIS_HOST || 'localhost',
-    port: process.env.REDIS_PORT || 6379
+    port: process.env.REDIS_PORT || 6379,
+    password: process.env.REDIS_PASSWORD || null
+  };
+
+  try {
+    if (redisConfig.url) {
+      // Usar URL completa (Railway ou outros)
+      redisClient = redis.createClient({
+        url: redisConfig.url
+      });
+    } else {
+      // Usar configuração individual
+      redisClient = redis.createClient({
+        socket: {
+          host: redisConfig.host,
+          port: redisConfig.port
+        },
+        password: redisConfig.password
+      });
+    }
+
+    redisClient.on('error', (err) => {
+      console.error('Redis Client Error:', err);
+    });
+
+    await redisClient.connect();
+    console.log('✅ Conectado ao Redis');
+  } catch (error) {
+    console.error('❌ Erro ao conectar Redis:', error);
+    // Não encerrar o app se Redis falhar
+    redisClient = null;
   }
-});
+}
 
-redisClient.connect().catch(console.error);
+// Inicializar Redis ao iniciar o servidor
+initializeRedis();
 
+// Função helper para operações Redis seguras
+async function safeRedisOperation(operation) {
+  if (!redisClient || !redisClient.isOpen) {
+    console.warn('⚠️ Redis não disponível, pulando operação de cache');
+    return null;
+  }
+  
+  try {
+    return await operation();
+  } catch (error) {
+    console.error('Erro na operação Redis:', error.message);
+    return null;
+  }
+}
 
 // ==================== ENDPOINTS DE USUÁRIO ====================
 
