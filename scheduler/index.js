@@ -11,21 +11,24 @@ const config = {
     port: process.env.DB_PORT || 5432,
     database: process.env.DB_NAME || 'bible_bot',
     user: process.env.DB_USER || 'bible_user',
-    password: process.env.DB_PASSWORD || 'bible_pass_2025',
-    schema: process.env.DB_SCHEMA || 'bible_bot'
+    password: process.env.DB_PASSWORD || 'bible_pass_2025'
   },
   redis: {
+    url: process.env.REDIS_URL || null,
     host: process.env.REDIS_HOST || 'localhost',
-    port: process.env.REDIS_PORT || 6379
+    port: process.env.REDIS_PORT || 6379,
+    password: process.env.REDIS_PASSWORD || null
   },
   evolution: {
     url: process.env.EVOLUTION_API_URL || 'http://localhost:8080',
-    apiKey: process.env.EVOLUTION_API_KEY || 'evolution_bible_bot_2025'
+    apiKey: process.env.EVOLUTION_API_KEY || 'evolution_bible_bot_2025',
+    instance: process.env.EVOLUTION_INSTANCE || 'bible_bot_instance'
   },
-  n8n: {
-    webhookUrl: process.env.N8N_WEBHOOK_URL || 'http://localhost:5678/webhook/scheduler'
-  }
+  timezone: process.env.TZ || 'America/Sao_Paulo'
 };
+
+// Configurar timezone
+moment.tz.setDefault(config.timezone);
 
 // Clientes
 let dbClient;
@@ -38,14 +41,24 @@ async function initializeConnections() {
     dbClient = new Client(config.db);
     await dbClient.connect();
     console.log('✅ Conectado ao PostgreSQL');
+    
+    // Testar query
+    const testResult = await dbClient.query('SELECT NOW() as db_time, CURRENT_DATE as db_date');
+    console.log('📅 Hora do banco:', testResult.rows[0].db_time);
+    console.log('📅 Data do banco:', testResult.rows[0].db_date);
 
     // Redis
-    redisClient = redis.createClient({
-      socket: {
-        host: config.redis.host,
-        port: config.redis.port
-      }
-    });
+    if (config.redis.url) {
+      redisClient = redis.createClient({ url: config.redis.url });
+    } else {
+      redisClient = redis.createClient({
+        socket: {
+          host: config.redis.host,
+          port: config.redis.port
+        },
+        password: config.redis.password
+      });
+    }
     
     redisClient.on('error', (err) => {
       console.error('❌ Erro no Redis:', err);
@@ -62,6 +75,35 @@ async function initializeConnections() {
 
 // Buscar usuários para notificar
 async function getUsersToNotify(currentTime) {
+  console.log(`🔍 Buscando usuários para notificar às ${currentTime}`);
+  
+  // Primeiro, vamos ver quantos usuários ativos existem
+  const activeUsersQuery = `
+    SELECT COUNT(*) as total, 
+           COUNT(CASE WHEN notification_time IS NOT NULL THEN 1 END) as with_time
+    FROM users 
+    WHERE is_active = true AND current_plan_id IS NOT NULL
+  `;
+  
+  const activeUsers = await dbClient.query(activeUsersQuery);
+  console.log(`👥 Usuários ativos: ${activeUsers.rows[0].total}, com horário: ${activeUsers.rows[0].with_time}`);
+  
+  // Debug: Ver horários configurados
+  const timesQuery = `
+    SELECT DISTINCT notification_time, COUNT(*) as count 
+    FROM users 
+    WHERE is_active = true AND notification_time IS NOT NULL 
+    GROUP BY notification_time 
+    ORDER BY notification_time
+  `;
+  
+  const times = await dbClient.query(timesQuery);
+  console.log('⏰ Horários configurados:');
+  times.rows.forEach(t => {
+    console.log(`   - ${t.notification_time}: ${t.count} usuário(s)`);
+  });
+  
+  // Query principal com mais informações
   const query = `
     SELECT 
       u.id,
@@ -72,24 +114,72 @@ async function getUsersToNotify(currentTime) {
       u.timezone,
       u.started_at,
       rp.name as plan_name,
-      dr.day_number,
-      dr.reference_text,
-      dr.book_name,
-      dr.chapters
+      rp.total_days,
+      -- Calcular qual dia do plano é hoje
+      (CURRENT_DATE - u.started_at::DATE + 1) as current_day_number
     FROM users u
     JOIN reading_plans rp ON rp.id = u.current_plan_id
-    JOIN daily_readings dr ON dr.plan_id = u.current_plan_id
-    LEFT JOIN user_progress up ON up.user_id = u.id 
-      AND up.plan_id = u.current_plan_id 
-      AND up.day_number = dr.day_number
     WHERE u.is_active = true
       AND u.notification_time = $1
-      AND (u.started_at::DATE + dr.day_number - 1) = CURRENT_DATE
-      AND (up.completed IS NULL OR up.completed = false)
+      AND u.started_at IS NOT NULL
   `;
   
   const result = await dbClient.query(query, [currentTime]);
-  return result.rows;
+  console.log(`📊 Usuários encontrados para ${currentTime}: ${result.rows.length}`);
+  
+  // Para cada usuário, buscar a leitura do dia
+  const usersWithReadings = [];
+  
+  for (const user of result.rows) {
+    const dayNumber = user.current_day_number;
+    
+    // Verificar se o dia está dentro do plano
+    if (dayNumber > 0 && dayNumber <= user.total_days) {
+      // Buscar leitura do dia
+      const readingQuery = `
+        SELECT dr.*, up.completed
+        FROM daily_readings dr
+        LEFT JOIN user_progress up ON up.user_id = $1 
+          AND up.plan_id = dr.plan_id 
+          AND up.day_number = dr.day_number
+        WHERE dr.plan_id = $2 AND dr.day_number = $3
+      `;
+      
+      const readingResult = await dbClient.query(readingQuery, [user.id, user.current_plan_id, dayNumber]);
+      
+      if (readingResult.rows.length > 0 && !readingResult.rows[0].completed) {
+        const reading = readingResult.rows[0];
+        console.log(`📖 ${user.phone_number} - Dia ${dayNumber}: ${reading.reference_text}`);
+        
+        usersWithReadings.push({
+          ...user,
+          day_number: dayNumber,
+          reference_text: reading.reference_text,
+          book_name: reading.book_name,
+          chapters: reading.chapters
+        });
+      }
+    } else {
+      console.log(`⚠️ ${user.phone_number} - Dia ${dayNumber} fora do plano (total: ${user.total_days})`);
+    }
+  }
+  
+  return usersWithReadings;
+}
+
+// Formatar mensagem de notificação (com escape correto)
+function formatNotificationMessage(user, reading) {
+  const daysSinceStart = reading.day_number;
+  
+  // IMPORTANTE: Usar \\n para quebras de linha no WhatsApp
+  return `📖 *Sua leitura de hoje!*\\n\\n` +
+    `👋 Olá ${user.name || 'amigo(a)'}!\\n\\n` +
+    `📅 *Dia ${reading.day_number}* do seu plano "${user.plan_name}"\\n` +
+    `📖 *Leitura:* ${reading.reference_text}\\n\\n` +
+    `🔥 *Você está no dia ${daysSinceStart}* da sua jornada!\\n\\n` +
+    `Após ler, confirme aqui para eu acompanhar seu progresso! 📊\\n\\n` +
+    `_Digite *2* para marcar como lida_\\n` +
+    `_Digite *1* para ver o menu_`;
 }
 
 // Enviar notificação via Evolution API
@@ -97,11 +187,14 @@ async function sendNotification(user, reading) {
   try {
     const message = formatNotificationMessage(user, reading);
     
+    console.log(`📤 Enviando para ${user.phone_number}...`);
+    
     const response = await axios.post(
-      `${config.evolution.url}/message/sendText/bible_bot_instance`,
+      `${config.evolution.url}/message/sendText/${config.evolution.instance}`,
       {
         number: user.phone_number,
-        text: message
+        text: message,
+        delay: 1000 // Delay de 1 segundo
       },
       {
         headers: {
@@ -111,74 +204,43 @@ async function sendNotification(user, reading) {
       }
     );
 
-    console.log(`📤 Notificação enviada para ${user.phone_number}`);
-    
-    // Registrar no banco
-    await logMessage(user.id, 'outgoing', message, 'sent');
+    console.log(`✅ Notificação enviada para ${user.phone_number}`);
     
     // Cache no Redis para evitar duplicatas
     const cacheKey = `notification:${user.id}:${reading.day_number}:${moment().format('YYYY-MM-DD')}`;
-    await redisClient.setEx(cacheKey, 3600, 'sent'); // 1 hora de cache
+    await redisClient.setEx(cacheKey, 3600, 'sent');
     
     return true;
   } catch (error) {
-    console.error(`❌ Erro ao enviar notificação para ${user.phone_number}:`, error.message);
-    await logMessage(user.id, 'outgoing', '', 'failed');
+    console.error(`❌ Erro ao enviar para ${user.phone_number}:`, error.response?.data || error.message);
     return false;
   }
 }
 
-// Formatar mensagem de notificação
-function formatNotificationMessage(user, reading) {
-  const daysSinceStart = moment().diff(moment(user.started_at), 'days') + 1;
-  
-  return `📖 *Sua leitura de hoje!*
-
-👋 Olá ${user.name || 'amigo(a)'}!
-
-📅 *Dia ${reading.day_number}* do seu plano "${user.plan_name}"
-📖 *Leitura:* ${reading.reference_text}
-
-🔥 *Você está no dia ${daysSinceStart}* da sua jornada!
-
-Após ler, confirme aqui para eu acompanhar seu progresso! 📊
-
-_Responda *LI* quando terminar a leitura_
-_Ou digite *MENU* para mais opções_`;
-}
-
-// Registrar mensagem no banco
-async function logMessage(userId, type, content, status) {
-  try {
-    await dbClient.query(
-      'INSERT INTO message_logs (user_id, message_type, message_content, status) VALUES ($1, $2, $3, $4)',
-      [userId, type, content, status]
-    );
-  } catch (error) {
-    console.error('❌ Erro ao registrar mensagem:', error);
-  }
-}
-
-// Verificar se já foi notificado hoje
-async function wasAlreadyNotified(userId, dayNumber) {
-  const cacheKey = `notification:${userId}:${dayNumber}:${moment().format('YYYY-MM-DD')}`;
-  const cached = await redisClient.get(cacheKey);
-  return cached !== null;
-}
-
 // Função principal de processamento
 async function processNotifications() {
-  const currentTime = moment().format('HH:mm:ss');
-  console.log(`🔄 Verificando notificações para ${currentTime}...`);
+  const now = moment();
+  const currentTime = now.format('HH:mm:ss');
+  
+  console.log(`\n🔄 Processando notificações - ${now.format('YYYY-MM-DD HH:mm:ss')} (${config.timezone})`);
   
   try {
     const users = await getUsersToNotify(currentTime);
-    console.log(`📋 ${users.length} usuários encontrados para notificar`);
+    
+    if (users.length === 0) {
+      console.log('💤 Nenhum usuário para notificar neste horário');
+      return;
+    }
+    
+    console.log(`📋 ${users.length} usuários para notificar`);
     
     for (const user of users) {
       // Verificar se já foi notificado
-      if (await wasAlreadyNotified(user.id, user.day_number)) {
-        console.log(`⏭️ Usuário ${user.phone_number} já foi notificado hoje`);
+      const cacheKey = `notification:${user.id}:${user.day_number}:${moment().format('YYYY-MM-DD')}`;
+      const cached = await redisClient.get(cacheKey);
+      
+      if (cached) {
+        console.log(`⏭️ ${user.phone_number} já foi notificado hoje`);
         continue;
       }
       
@@ -190,8 +252,8 @@ async function processNotifications() {
         chapters: user.chapters
       });
       
-      // Pequena pausa entre envios
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Pausa entre envios
+      await new Promise(resolve => setTimeout(resolve, 2000));
     }
     
   } catch (error) {
@@ -199,159 +261,73 @@ async function processNotifications() {
   }
 }
 
-// Limpeza de cache antigo
-async function cleanupCache() {
-  try {
-    const keys = await redisClient.keys('notification:*');
-    const yesterday = moment().subtract(1, 'day').format('YYYY-MM-DD');
-    
-    for (const key of keys) {
-      if (key.includes(yesterday)) {
-        await redisClient.del(key);
-      }
-    }
-    
-    console.log('🧹 Cache antigo limpo');
-  } catch (error) {
-    console.error('❌ Erro na limpeza do cache:', error);
+// Teste manual - adicione esta função
+async function testNotification(phoneNumber) {
+  console.log('🧪 Teste manual de notificação');
+  
+  const query = `
+    SELECT u.*, rp.name as plan_name, 
+           (CURRENT_DATE - u.started_at::DATE + 1) as current_day
+    FROM users u
+    JOIN reading_plans rp ON rp.id = u.current_plan_id
+    WHERE u.phone_number = $1
+  `;
+  
+  const result = await dbClient.query(query, [phoneNumber]);
+  
+  if (result.rows.length === 0) {
+    console.log('❌ Usuário não encontrado');
+    return;
   }
+  
+  const user = result.rows[0];
+  console.log('👤 Usuário:', user);
+  
+  // Simular envio
+  await sendNotification(user, {
+    day_number: user.current_day,
+    reference_text: 'Teste - Gênesis 1-3',
+    book_name: 'Gênesis',
+    chapters: '1-3'
+  });
 }
 
-// Verificar usuários que perderam leituras
-async function checkMissedReadings() {
-  try {
-    const query = `
-      SELECT DISTINCT
-        u.id,
-        u.phone_number,
-        u.name,
-        COUNT(*) as missed_days
-      FROM users u
-      JOIN daily_readings dr ON dr.plan_id = u.current_plan_id
-      LEFT JOIN user_progress up ON up.user_id = u.id 
-        AND up.plan_id = u.current_plan_id 
-        AND up.day_number = dr.day_number
-      WHERE u.is_active = true
-        AND (u.started_at::DATE + dr.day_number - 1) < CURRENT_DATE
-        AND (up.completed IS NULL OR up.completed = false)
-      GROUP BY u.id, u.phone_number, u.name
-      HAVING COUNT(*) >= 3  -- 3 ou mais dias perdidos
-    `;
-    
-    const result = await dbClient.query(query);
-    
-    for (const user of result.rows) {
-      // Enviar mensagem de encorajamento (sem spam)
-      const lastEncouragement = await redisClient.get(`encouragement:${user.id}`);
-      if (!lastEncouragement) {
-        await sendEncouragementMessage(user);
-        await redisClient.setEx(`encouragement:${user.id}`, 86400 * 3, 'sent'); // 3 dias
-      }
-    }
-    
-  } catch (error) {
-    console.error('❌ Erro ao verificar leituras perdidas:', error);
-  }
-}
-
-// Enviar mensagem de encorajamento
-async function sendEncouragementMessage(user) {
-  const message = `💪 *Não desista!*
-
-Olá ${user.name || 'amigo(a)'}! 
-
-Notei que você perdeu algumas leituras, mas isso é normal! O importante é recomeçar. 🙏
-
-📖 Que tal recuperar o ritmo hoje? Digite *MENU* para ver suas opções.
-
-_"O Senhor é compassivo e cheio de misericórdia"_ - Salmos 145:8`;
-
-  try {
-    await axios.post(
-      `${config.evolution.url}/message/sendText/bible_bot_instance`,
-      {
-        number: user.phone_number,
-        text: message
-      },
-      {
-        headers: {
-          'apikey': config.evolution.apiKey,
-          'Content-Type': 'application/json'
-        }
-      }
-    );
-    
-    await logMessage(user.id, 'outgoing', message, 'sent');
-    console.log(`💪 Mensagem de encorajamento enviada para ${user.phone_number}`);
-    
-  } catch (error) {
-    console.error(`❌ Erro ao enviar encorajamento para ${user.phone_number}:`, error);
-  }
-}
-
-// Health check endpoint usando http nativo
+// Health check
 const http = require('http');
-
-// Criar servidor HTTP simples para health check
 const server = http.createServer((req, res) => {
-  if (req.url === '/health' && req.method === 'GET') {
+  if (req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ 
       status: 'healthy', 
       timestamp: new Date().toISOString(),
-      uptime: process.uptime()
+      timezone: config.timezone,
+      nextRun: cron.getTasks()[0]?.nextDates(1)[0] || 'N/A'
     }));
-  } else {
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not Found');
   }
 });
 
 // Inicialização
 async function start() {
   console.log('🚀 Iniciando Bible Bot Scheduler...');
+  console.log(`🌍 Timezone: ${config.timezone}`);
+  console.log(`⏰ Hora atual: ${moment().format('YYYY-MM-DD HH:mm:ss')}`);
   
   await initializeConnections();
   
-  // Iniciar servidor HTTP para health check
   server.listen(3000, () => {
-    console.log('✅ Health check disponível na porta 3000');
+    console.log('✅ Health check na porta 3000');
   });
   
-  // Agendar verificação de notificações a cada minuto
+  // Agendar notificações
   cron.schedule('* * * * *', processNotifications);
-  console.log('⏰ Agendador de notificações iniciado (a cada minuto)');
+  console.log('⏰ Agendador iniciado (verificação a cada minuto)');
   
-  // Limpeza de cache às 2h da manhã
-  cron.schedule('0 2 * * *', cleanupCache);
-  console.log('🧹 Agendador de limpeza iniciado (2h da manhã)');
+  // Executar uma vez ao iniciar para teste
+  await processNotifications();
   
-  // Verificar leituras perdidas às 20h
-  cron.schedule('0 20 * * *', checkMissedReadings);
-  console.log('💪 Agendador de encorajamento iniciado (20h)');
-  
-  console.log('✅ Bible Bot Scheduler executando!');
+  // Comando para teste manual (descomente se precisar)
+  // await testNotification('556199462043');
 }
 
-// Lidar com sinais de encerramento
-process.on('SIGINT', async () => {
-  console.log('🛑 Encerrando Bible Bot Scheduler...');
-  
-  if (dbClient) await dbClient.end();
-  if (redisClient) await redisClient.quit();
-  
-  process.exit(0);
-});
-
-process.on('uncaughtException', (error) => {
-  console.error('❌ Erro não capturado:', error);
-  process.exit(1);
-});
-
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Promise rejeitada não tratada:', reason);
-  process.exit(1);
-});
-
-// Iniciar aplicação
+// Iniciar
 start().catch(console.error);
