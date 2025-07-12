@@ -154,6 +154,29 @@ app.put('/user/:phoneNumber/status', async (req, res) => {
   }
 });
 
+// DEL /user/:phoneNumber/del - Deletar usuário
+app.del('/user/:phoneNumber/del', async (req, res) => {
+  try {
+    const { phoneNumber } = req.params;
+    
+    const result = await pool.query(
+      `DELETE users  
+       WHERE phone_number = $1
+       RETURNING *`,
+      [phoneNumber]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating status:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // ==================== ENDPOINTS DE PLANOS ====================
 
 // GET /plans - Listar todos os planos
