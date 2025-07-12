@@ -154,24 +154,89 @@ app.put('/user/:phoneNumber/status', async (req, res) => {
   }
 });
 
-// DELETE /user/:phoneNumber/del - Deletar usuário
-app.delete('/user/:phoneNumber/delete', async (req, res) => {
+// DELETE /user/:phoneNumber - Deletar usuário completamente
+app.delete('/user/:phoneNumber', async (req, res) => {
   try {
     const { phoneNumber } = req.params;
     
-    const result = await pool.query(
-      `DELETE FROM users WHERE phone_number = $1;`,
-      [phoneNumber]
-    );
+    // Começar transação para garantir integridade
+    await pool.query('BEGIN');
     
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
+    try {
+      // 1. Primeiro verificar se o usuário existe
+      const checkUser = await pool.query(
+        'SELECT id, name FROM users WHERE phone_number = $1',
+        [phoneNumber]
+      );
+      
+      if (checkUser.rows.length === 0) {
+        await pool.query('ROLLBACK');
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      const userId = checkUser.rows[0].id;
+      const userName = checkUser.rows[0].name;
+      
+      // 2. Deletar registros relacionados (ordem importante por causa das FKs)
+      
+      // Deletar logs de mensagens
+      await pool.query(
+        'DELETE FROM message_logs WHERE user_id = $1',
+        [userId]
+      );
+      
+      // Deletar estatísticas de progresso
+      await pool.query(
+        'DELETE FROM progress_stats WHERE user_id = $1',
+        [userId]
+      );
+      
+      // Deletar progresso do usuário
+      await pool.query(
+        'DELETE FROM user_progress WHERE user_id = $1',
+        [userId]
+      );
+      
+      // 3. Finalmente deletar o usuário
+      await pool.query(
+        'DELETE FROM users WHERE id = $1',
+        [userId]
+      );
+      
+      // Limpar cache no Redis se existir
+      try {
+        const keys = await redisClient.keys(`*:${phoneNumber}:*`);
+        if (keys.length > 0) {
+          await redisClient.del(keys);
+        }
+      } catch (redisError) {
+        console.warn('Erro ao limpar cache Redis:', redisError);
+      }
+      
+      // Confirmar transação
+      await pool.query('COMMIT');
+      
+      res.json({
+        success: true,
+        message: 'User deleted successfully',
+        deletedUser: {
+          id: userId,
+          phone_number: phoneNumber,
+          name: userName
+        }
+      });
+      
+    } catch (error) {
+      await pool.query('ROLLBACK');
+      throw error;
     }
     
-    res.json(result.rows[0]);
   } catch (error) {
-    console.error('Error updating status:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('Error deleting user:', error);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: error.message 
+    });
   }
 });
 
