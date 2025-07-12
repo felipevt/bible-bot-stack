@@ -411,7 +411,7 @@ app.post('/progress/:phoneNumber/complete', async (req, res) => {
         `SELECT day_number 
          FROM daily_readings 
          WHERE plan_id = $1 
-           AND day_number = EXTRACT(DOY FROM CURRENT_DATE - (SELECT started_at FROM users WHERE id = $2))::INTEGER + 1`,
+           AND day_number = EXTRACT(DAY FROM CURRENT_DATE - (SELECT started_at FROM users WHERE id = $2))::INTEGER + 1`,
         [user.current_plan_id, user.id]
       );
       
