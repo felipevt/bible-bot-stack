@@ -449,7 +449,7 @@ app.get('/progress/:phoneNumber/report', async (req, res) => {
     const { phoneNumber } = req.params;
     
     // Buscar dados completos
-    const progressData = await fetch(`http://localhost:8080/progress/${phoneNumber}`);
+    const progressData = await fetch(`/progress/${phoneNumber}`);
     const data = await progressData.json();
     console.log(`✅ Fez a consulta de progresso pelo usuário: ${phoneNumber}`);
     
