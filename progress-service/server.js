@@ -154,15 +154,13 @@ app.put('/user/:phoneNumber/status', async (req, res) => {
   }
 });
 
-// DEL /user/:phoneNumber/del - Deletar usuário
+// DELETE /user/:phoneNumber/del - Deletar usuário
 app.delete('/user/:phoneNumber/delete', async (req, res) => {
   try {
     const { phoneNumber } = req.params;
     
     const result = await pool.query(
-      `DELETE users  
-       WHERE phone_number = $1
-       RETURNING *`,
+      `DELETE FROM users WHERE phone_number = $1;`,
       [phoneNumber]
     );
     
