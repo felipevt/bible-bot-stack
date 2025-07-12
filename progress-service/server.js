@@ -30,6 +30,32 @@ const redisClient = redis.createClient({
 
 redisClient.connect().catch(console.error);
 
+  try{
+// Redis
+    if (config.redis.url) {
+      redisClient = redis.createClient({ url: config.redis.url });
+    } else {
+      redisClient = redis.createClient({
+        socket: {
+          host: config.redis.host,
+          port: config.redis.port
+        },
+        password: config.redis.password
+      });
+    }
+    
+    redisClient.on('error', (err) => {
+      console.error('❌ Erro no Redis:', err);
+    });
+    
+    await redisClient.connect();
+    console.log('✅ Conectado ao Redis');
+
+  } catch (error) {
+    console.error('❌ Erro ao conectar:', error);
+    process.exit(1);
+  }
+
 // ==================== ENDPOINTS DE USUÁRIO ====================
 
 // GET /user/:phoneNumber - Buscar usuário
