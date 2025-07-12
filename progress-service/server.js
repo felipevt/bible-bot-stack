@@ -451,6 +451,7 @@ app.get('/progress/:phoneNumber/report', async (req, res) => {
     // Buscar dados completos
     const progressData = await fetch(`http://localhost:8080/progress/${phoneNumber}`);
     const data = await progressData.json();
+    console.log(`✅ Fez a consulta de progresso pelo usuário: ${phoneNumber}`);
     
     if (!data.progress) {
       return res.send('Você ainda não tem um plano ativo. Digite 1 para ver o menu.');
