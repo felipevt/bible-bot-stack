@@ -23,7 +23,7 @@ RUN chown -R nodejs:nodejs /app
 USER nodejs
 
 # Expor porta
-EXPOSE 3001
+EXPOSE 8080
 
 # Comando de inicialização
 CMD ["node", "server.js"]
