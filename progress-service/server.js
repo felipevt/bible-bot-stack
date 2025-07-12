@@ -1,13 +1,17 @@
-
+require('dotenv').config();
 const express = require('express');
 const { Pool } = require('pg');
 const redis = require('redis');
 const moment = require('moment-timezone');
+const apiKeyAuth = require('./middleware/apiKeyAuth'); // NOVO
 
 const app = express();
 app.use(express.json());
+app.use(apiKeyAuth); // Protege todos os endpoints
 
-// Configuração do banco
+// === Resto do seu código permanece o mesmo ===
+// ... configuração do pool, redis, endpoints, etc.
+
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
   port: process.env.DB_PORT || 5432,
@@ -19,9 +23,8 @@ const pool = new Pool({
   connectionTimeoutMillis: 2000,
 });
 
-// Configuração Redis - CORRIGIDA
+// Configuração Redis
 let redisClient;
-
 async function initializeRedis() {
   const redisConfig = {
     url: process.env.REDIS_URL || null,
@@ -32,44 +35,30 @@ async function initializeRedis() {
 
   try {
     if (redisConfig.url) {
-      // Usar URL completa (Railway ou outros)
-      redisClient = redis.createClient({
-        url: redisConfig.url
-      });
+      redisClient = redis.createClient({ url: redisConfig.url });
     } else {
-      // Usar configuração individual
       redisClient = redis.createClient({
-        socket: {
-          host: redisConfig.host,
-          port: redisConfig.port
-        },
+        socket: { host: redisConfig.host, port: redisConfig.port },
         password: redisConfig.password
       });
     }
 
-    redisClient.on('error', (err) => {
-      console.error('Redis Client Error:', err);
-    });
-
+    redisClient.on('error', (err) => console.error('Redis Client Error:', err));
     await redisClient.connect();
     console.log('✅ Conectado ao Redis');
   } catch (error) {
     console.error('❌ Erro ao conectar Redis:', error);
-    // Não encerrar o app se Redis falhar
     redisClient = null;
   }
 }
-
-// Inicializar Redis ao iniciar o servidor
 initializeRedis();
 
-// Função helper para operações Redis seguras
+// Função segura para operações Redis
 async function safeRedisOperation(operation) {
   if (!redisClient || !redisClient.isOpen) {
-    console.warn('⚠️ Redis não disponível, pulando operação de cache');
+    console.warn('⚠️ Redis não disponível');
     return null;
   }
-  
   try {
     return await operation();
   } catch (error) {
