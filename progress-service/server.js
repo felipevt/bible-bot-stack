@@ -450,7 +450,11 @@ app.get('/progress/:phoneNumber/report', async (req, res) => {
     
     // Buscar dados completos
     console.log(`✅ Variáveis: ${process.env.SERVICE_URL} ${process.env.SERVICE_PORT}`);
-    const progressData = await fetch(`${process.env.SERVICE_URL}:${process.env.SERVICE_PORT}/progress/${phoneNumber}`);
+    const progressData = await fetch(`${process.env.SERVICE_URL}:${process.env.SERVICE_PORT}/progress/${phoneNumber}`, {
+  headers: {
+    'x-api-key': process.env.API_KEY
+  }
+});
     const data = await progressData.json();
     console.log(`✅ Fez a consulta de progresso pelo usuário: ${phoneNumber}`);
     
