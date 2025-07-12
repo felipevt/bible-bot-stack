@@ -11,7 +11,12 @@ const config = {
     port: process.env.DB_PORT || 5432,
     database: process.env.DB_NAME || 'bible_bot',
     user: process.env.DB_USER || 'bible_user',
-    password: process.env.DB_PASSWORD || 'bible_pass_2025'
+    password: process.env.DB_PASSWORD || 'bible_pass_2025',
+      // ✅ CORRETO: usar options em vez de schema
+    options: `-c search_path=${process.env.DB_SCHEMA || 'public'}`,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
   },
   redis: {
     url: process.env.REDIS_URL || null,
