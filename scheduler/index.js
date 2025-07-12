@@ -177,13 +177,13 @@ function formatNotificationMessage(user, reading) {
   const daysSinceStart = reading.day_number;
   
   // IMPORTANTE: Usar \\n para quebras de linha no WhatsApp
-  return `📖 *Sua leitura de hoje!*\\n\\n` +
-    `👋 Olá ${user.name || 'amigo(a)'}!\\n\\n` +
-    `📅 *Dia ${reading.day_number}* do seu plano "${user.plan_name}"\\n` +
-    `📖 *Leitura:* ${reading.reference_text}\\n\\n` +
-    `🔥 *Você está no dia ${daysSinceStart}* da sua jornada!\\n\\n` +
-    `Após ler, confirme aqui para eu acompanhar seu progresso! 📊\\n\\n` +
-    `_Digite *2* para marcar como lida_\\n` +
+  return `📖 *Sua leitura de hoje!*\n\n` +
+    `👋 Olá ${user.name || 'amigo(a)'}!\n\n` +
+    `📅 *Dia ${reading.day_number}* do seu plano "${user.plan_name}"\n` +
+    `📖 *Leitura:* ${reading.reference_text}\n\n` +
+    `🔥 *Você está no dia ${daysSinceStart}* da sua jornada!\n\n` +
+    `Após ler, confirme aqui para eu acompanhar seu progresso! 📊\n\n` +
+    `_Digite *2* para marcar como lida_\n` +
     `_Digite *1* para ver o menu_`;
 }
 
