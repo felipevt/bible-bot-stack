@@ -3,7 +3,7 @@ function apiKeyAuth(req, res, next) {
   const serverKey = process.env.API_KEY;
 
   if (!clientKey || clientKey !== serverKey) {
-    return res.status(401).json({ error: 'Unauthorized: Invalid or missing API key' });
+    return res.status(401).json({ error: 'Não autorizado: API key inválida ou faltando' });
   }
 
   next();
