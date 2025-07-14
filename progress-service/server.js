@@ -168,6 +168,37 @@ app.put('/user/:phoneNumber/time', async (req, res) => {
   }
 });
 
+// PUT /user/:phoneNumber/workflow - Atualizar horário de notificação
+app.put('/user/:phoneNumber/workflow', async (req, res) => {
+  try {
+    const { phoneNumber } = req.params;
+    const { workflowStatus } = req.body;
+    
+    // Validar formato do status
+    // const timeRegex = /^([0-1]?[0-9]|2[0-3]):([0-5][0-9])$/;
+    // if (!timeRegex.test(notificationTime)) {
+    //   return res.status(400).json({ error: 'Invalid time format' });
+    // }
+    
+    const result = await pool.query(
+      `UPDATE users 
+       SET workflow_status = $1
+       WHERE phone_number = $2 
+       RETURNING *`,
+      [workflowStatus, phoneNumber]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json(result.rows[0]);
+  } catch (error) {
+    console.error('Error updating workflow_status:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 // PUT /user/:phoneNumber/status - Ativar/Desativar usuário
 app.put('/user/:phoneNumber/status', async (req, res) => {
   try {
@@ -622,6 +653,7 @@ app.post('/message/log', async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
 
 // ==================== HEALTH CHECK ====================
 

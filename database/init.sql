@@ -21,12 +21,13 @@ CREATE TABLE users (
     phone_number VARCHAR(20) UNIQUE NOT NULL,
     name VARCHAR(100),
     current_plan_id INTEGER REFERENCES reading_plans(id),
-    notification_time TIME DEFAULT '08:00:00',
+    notification_time TIME DEFAULT,
     timezone VARCHAR(50) DEFAULT 'America/Sao_Paulo',
     is_active BOOLEAN DEFAULT true,
     started_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    workflow_status VARCHAR(50)
 );
 
 -- Tabela de leituras diárias por plano
