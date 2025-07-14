@@ -512,126 +512,93 @@ app.get('/progress/:phoneNumber/next-readings', async (req, res) => {
     const { phoneNumber } = req.params;
     const limit = req.query.limit || 3;
     
-    console.log(`📚 Buscando próximas leituras para: ${phoneNumber}, limite: ${limit}`);
-    
-    // Primeiro, verificar se o usuário existe e está configurado
-    const userCheck = await pool.query(
-      `SELECT 
-        u.id,
-        u.phone_number,
-        u.current_plan_id,
-        u.is_active,
-        u.started_at,
+    // 1. Buscar informações do usuário
+    const userQuery = `
+      SELECT 
+        u.*,
         rp.name as plan_name,
-        rp.total_days
-       FROM users u
-       LEFT JOIN reading_plans rp ON rp.id = u.current_plan_id
-       WHERE u.phone_number = $1`,
-      [phoneNumber]
-    );
+        rp.total_days,
+        CURRENT_DATE as hoje,
+        (CURRENT_DATE - u.started_at::DATE + 1) as dia_atual_do_plano
+      FROM users u
+      LEFT JOIN reading_plans rp ON rp.id = u.current_plan_id
+      WHERE u.phone_number = $1
+    `;
     
-    if (userCheck.rows.length === 0) {
-      console.log('❌ Usuário não encontrado');
+    const userResult = await pool.query(userQuery, [phoneNumber]);
+    
+    if (userResult.rows.length === 0) {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    const user = userCheck.rows[0];
-    console.log('👤 Usuário encontrado:', {
-      id: user.id,
-      plano: user.plan_name,
-      ativo: user.is_active,
-      inicio: user.started_at
-    });
+    const user = userResult.rows[0];
     
+    // Validações
     if (!user.current_plan_id) {
-      console.log('❌ Usuário sem plano');
       return res.json([]);
     }
     
     if (!user.started_at) {
-      console.log('❌ Usuário sem data de início');
       return res.json([]);
     }
     
-    // Calcular dia atual do plano
-    const diasDesdeInicio = await pool.query(
-      `SELECT CURRENT_DATE - $1::DATE + 1 as dias`,
-      [user.started_at]
-    );
-    
-    const diaAtual = diasDesdeInicio.rows[0].dias;
-    console.log(`📅 Dia atual do plano: ${diaAtual} de ${user.total_days}`);
-    
-    // Query principal com mais detalhes
-    const query = `
+    // 2. Buscar próximas leituras (a partir do dia atual)
+    const nextReadingsQuery = `
       SELECT 
-        dr.id,
-        dr.plan_id,
         dr.day_number,
         dr.book_name,
         dr.chapters,
         dr.reference_text,
-        (u.started_at::DATE + dr.day_number - 1) as reading_date,
-        up.completed,
-        up.completed_at
-      FROM users u
-      JOIN daily_readings dr ON dr.plan_id = u.current_plan_id
-      LEFT JOIN user_progress up ON up.user_id = u.id 
-        AND up.plan_id = u.current_plan_id 
+        ($1::DATE + dr.day_number - 1) as reading_date,
+        COALESCE(up.completed, false) as completed
+      FROM daily_readings dr
+      LEFT JOIN user_progress up ON up.user_id = $2
+        AND up.plan_id = dr.plan_id 
         AND up.day_number = dr.day_number
-      WHERE u.phone_number = $1
-        AND u.is_active = true
+      WHERE dr.plan_id = $3
+        AND dr.day_number >= $4
         AND (up.completed IS NULL OR up.completed = false)
-        AND dr.day_number >= $2  -- A partir do dia atual
-        AND dr.day_number <= u.current_plan_id  -- Dentro do plano
       ORDER BY dr.day_number
-      LIMIT $3`;
+      LIMIT $5
+    `;
     
-    const result = await pool.query(query, [phoneNumber, diaAtual, limit]);
+    const nextReadings = await pool.query(
+      nextReadingsQuery, 
+      [user.started_at, user.id, user.current_plan_id, user.dia_atual_do_plano, limit]
+    );
     
-    console.log(`📖 Leituras encontradas: ${result.rows.length}`);
-    
-    if (result.rows.length === 0) {
-      // Verificar se já completou todas
-      const completedCheck = await pool.query(
-        `SELECT COUNT(*) as total_completas
-         FROM user_progress
-         WHERE user_id = $1 
-           AND plan_id = $2 
-           AND completed = true`,
-        [user.id, user.current_plan_id]
+    // 3. Se não encontrou nada, buscar a próxima não lida (independente da data)
+    if (nextReadings.rows.length === 0) {
+      const anyUnreadQuery = `
+        SELECT 
+          dr.day_number,
+          dr.book_name,
+          dr.chapters,
+          dr.reference_text,
+          ($1::DATE + dr.day_number - 1) as reading_date
+        FROM daily_readings dr
+        LEFT JOIN user_progress up ON up.user_id = $2
+          AND up.plan_id = dr.plan_id 
+          AND up.day_number = dr.day_number
+        WHERE dr.plan_id = $3
+          AND (up.completed IS NULL OR up.completed = false)
+        ORDER BY dr.day_number
+        LIMIT $4
+      `;
+      
+      const anyUnread = await pool.query(
+        anyUnreadQuery,
+        [user.started_at, user.id, user.current_plan_id, limit]
       );
       
-      console.log(`✅ Leituras completas: ${completedCheck.rows[0].total_completas}/${user.total_days}`);
-      
-      if (completedCheck.rows[0].total_completas >= user.total_days) {
-        return res.json({
-          message: 'Parabéns! Você completou todo o plano!',
-          completed: true,
-          readings: []
-        });
-      }
+      return res.json(anyUnread.rows);
     }
     
-    // Formatar resposta
-    const readings = result.rows.map(row => ({
-      dayNumber: row.day_number,
-      bookName: row.book_name,
-      chapters: row.chapters,
-      referenceText: row.reference_text,
-      readingDate: row.reading_date,
-      completed: row.completed || false
-    }));
-    
-    console.log('📚 Retornando leituras:', readings);
-    res.json(readings);
+    res.json(nextReadings.rows);
     
   } catch (error) {
-    console.error('❌ Erro ao buscar próximas leituras:', error);
-    res.status(500).json({ 
-      error: 'Internal server error',
-      details: error.message 
-    });
+    console.error('Error fetching next readings:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 
